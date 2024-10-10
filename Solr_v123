@@ -1,0 +1,214 @@
+import pandas as pd
+import requests
+import json
+
+ 
+file_path = "c:\\Users\\9550449358\\Desktop\\agile\\EmployeeSampleData1.csv"
+
+def read_csv_data(file_path, exclude_columns=None):
+    """
+    Reads data from the uploaded CSV file and returns it as a list of dictionaries.
+    
+    :param file_path: Path to the CSV file.
+    :param exclude_columns: A list of columns to exclude from indexing.
+    :return: List of dictionaries representing the data.
+    """
+    df = pd.read_csv(file_path, encoding='ISO-8859-1')
+    
+    # Drop excluded columns if specified
+    if exclude_columns:
+        df = df.drop(columns=exclude_columns, errors='ignore')
+    
+    # Convert DataFrame to a list of dictionaries
+    data = df.to_dict(orient='records')
+    return data
+
+def create_solr_collection(solr_url, collection_name, num_shards=1, replication_factor=1):
+    """
+    Creates a Solr collection. Checks if the collection already exists.
+    
+    :param solr_url: Solr server URL.
+    :param collection_name: Name of the Solr collection.
+    :param num_shards: Number of shards for the collection.
+    :param replication_factor: Replication factor for the collection.
+    """
+    list_url = f"{solr_url}/admin/collections?action=LIST"
+    
+    try:
+        response = requests.get(list_url)
+        response.raise_for_status()
+        collections = response.json().get('collections', [])
+        
+        if collection_name in collections:
+            print(f"Collection '{collection_name}' already exists.")
+            return
+        else:
+            create_url = f"{solr_url}/admin/collections"
+            params = {
+                "action": "CREATE",
+                "name": collection_name,
+                "numShards": num_shards,
+                "replicationFactor": replication_factor
+            }
+            response = requests.get(create_url, params=params)
+            response.raise_for_status()
+            print(f"Collection '{collection_name}' created successfully.")
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Error creating collection: {e}")
+
+def index_data_to_solr(data, solr_url, collection_name):
+    """
+    Index data to Solr.
+    
+    :param data: List of dictionaries containing the data to index.
+    :param solr_url: Solr server URL.
+    :param collection_name: The name of the Solr collection.
+    """
+    update_url = f"{solr_url}/{collection_name}/update?commit=true"
+    headers = {'Content-Type': 'application/json'}
+    
+    try:
+        response = requests.post(update_url, headers=headers, data=json.dumps(data))
+        response.raise_for_status()
+        print(f"Data successfully indexed into collection '{collection_name}'")
+    except requests.exceptions.RequestException as e:
+        print(f"Error indexing data: {e}")
+
+def get_emp_count(solr_url, collection_name):
+    """
+    Get the number of employees in the collection.
+    
+    :param solr_url: Solr server URL.
+    :param collection_name: Name of the Solr collection.
+    """
+    count_url = f"{solr_url}/{collection_name}/select"
+    params = {'q': '*:*', 'rows': 0, 'wt': 'json'}
+    
+    try:
+        response = requests.get(count_url, params=params)
+        response.raise_for_status()
+        return response.json()['response']['numFound']
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching employee count: {e}")
+        return None
+
+def del_emp_by_id(solr_url, collection_name, employee_id):
+    """
+    Delete an employee by their Employee_ID.
+    
+    :param solr_url: Solr server URL.
+    :param collection_name: Name of the Solr collection.
+    :param employee_id: ID of the employee to delete.
+    """
+    delete_url = f"{solr_url}/{collection_name}/update?commit=true"
+    payload = {"delete": {"query": f"Employee_ID:\"{employee_id}\""}}
+    
+    try:
+        response = requests.post(delete_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
+        response.raise_for_status()
+        print(f"Employee ID {employee_id} deleted successfully.")
+    except requests.exceptions.RequestException as e:
+        print(f"Error deleting employee: {e}")
+
+def search_by_column(solr_url, collection_name, column_name, column_value):
+    """
+    Search for employees based on a specific column value.
+    
+    :param solr_url: Solr server URL.
+    :param collection_name: The name of the Solr collection.
+    :param column_name: The column to search by.
+    :param column_value: The value to search for.
+    """
+    search_url = f"{solr_url}/{collection_name}/select"
+    params = {'q': f'{column_name}:{column_value}', 'wt': 'json', 'indent': 'true'}
+    
+    try:
+        response = requests.get(search_url, params=params)
+        response.raise_for_status()
+        return response.json()['response']['docs']
+    except requests.exceptions.RequestException as e:
+        print(f"Error searching by column: {e}")
+        return None
+
+def get_dep_facet(solr_url, collection_name, facet_field):
+    """
+    Retrieve the count of employees grouped by a facet field.
+    
+    :param solr_url: Solr server URL.
+    :param collection_name: Name of the Solr collection.
+    :param facet_field: Field to group by.
+    """
+    facet_url = f"{solr_url}/{collection_name}/select"
+    params = {'q': '*:*', 'facet': 'true', 'facet.field': facet_field, 'facet.mincount': 1, 'rows': 0}
+    
+    try:
+        response = requests.get(facet_url, params=params)
+        response.raise_for_status()
+        facet_counts = response.json().get('facet_counts', {}).get('facet_fields', {}).get(facet_field, [])
+        return dict(zip(facet_counts[::2], facet_counts[1::2]))
+    except requests.exceptions.RequestException as e:
+        print(f"Error retrieving facet counts: {e}")
+        return None
+
+# Main execution
+if __name__ == "__main__":
+    # Solr server URL
+    solr_url = "http://localhost:8989/solr"
+    
+    # Name-based collection
+    v_nameCollection = "Hash_Dharmendra"
+    
+    
+    v_phoneCollection = "Hash_4358"
+    
+     
+    create_solr_collection(solr_url, v_nameCollection)
+    create_solr_collection(solr_url, v_phoneCollection)
+    
+    # Step (b): Read and index data excluding "Department"
+    data = read_csv_data(file_path, exclude_columns=["Department"])
+    index_data_to_solr(data, solr_url, v_nameCollection)
+    
+    # Step (c): Get employee count
+    emp_count = get_emp_count(solr_url, v_nameCollection)
+    print(f"Employee count in '{v_nameCollection}': {emp_count}")
+    
+    # Step (d): Index data to phone collection excluding "Gender"
+    data = read_csv_data(file_path, exclude_columns=["Gender"])
+    index_data_to_solr(data, solr_url, v_phoneCollection)
+    
+    # Step (e): Get employee count after indexing
+    emp_count = get_emp_count(solr_url, v_nameCollection)
+    print(f"Employee count in '{v_nameCollection}' after indexing: {emp_count}")
+    
+    # Step (f): Delete employee by ID 'E02003'
+    del_emp_by_id(solr_url, v_nameCollection, 'E02003')
+    
+    # Step (g): Get employee count after deletion
+    emp_count = get_emp_count(solr_url, v_nameCollection)
+    print(f"Employee count in '{v_nameCollection}' after deletion: {emp_count}")
+    
+    # Step (h): Search employees by department 'IT'
+    it_employees = search_by_column(solr_url, v_nameCollection, 'Department', 'IT')
+    print(f"Employees in IT department: {it_employees}")
+    
+    # Step (i): Search employees by gender 'Male'
+    male_employees = search_by_column(solr_url, v_nameCollection, 'Gender', 'Male')
+    print(f"Male employees: {male_employees}")
+    
+    # Step (j): Search IT department employees in phone collection
+    it_employees_phone = search_by_column(solr_url, v_phoneCollection, 'Department', 'IT')
+    print(f"IT employees in phone collection: {it_employees_phone}")
+    
+    # Step (k): Get department facet counts in name collection
+    dep_facet_counts = get_dep_facet(solr_url, v_nameCollection, 'Department')
+    print(f"Department facet counts in name collection: {dep_facet_counts}")
+
+    it_employees_phone = search_by_column(solr_url, v_phoneCollection, 'Department', 'IT')
+    print(f"IT employees in phone collection: {it_employees_phone}")
+    
+     
+
+     
+    
